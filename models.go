@@ -52,6 +52,22 @@ type KetersediaanResponse struct {
 	Slot         []SlotKetersediaan `json:"slot"`
 }
 
+// Change Request A: Dashboard Ringkasan Harian
+// RingkasanSumberDaya merepresentasikan ringkasan jumlah peminjaman per sumber daya pada tanggal tertentu.
+type RingkasanSumberDaya struct {
+	SumberDayaID     int    `json:"sumber_daya_id"`
+	Nama             string `json:"nama"`
+	JumlahPeminjaman int    `json:"jumlah_peminjaman"`
+}
+
+// RingkasanResponse merepresentasikan payload respons untuk GET /ringkasan?tanggal=YYYY-MM-DD.
+type RingkasanResponse struct {
+	Tanggal          string                `json:"tanggal"`
+	JumlahPeminjaman int                   `json:"jumlah_peminjaman"`
+	TotalUnitSlot    int                   `json:"total_unit_slot"`
+	PerSumberDaya    []RingkasanSumberDaya `json:"per_sumber_daya"`
+}
+
 // ErrorResponse merepresentasikan format respons standar untuk error.
 type ErrorResponse struct {
 	Error string `json:"error"`

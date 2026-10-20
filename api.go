@@ -35,6 +35,9 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("PUT /peminjaman/{id}", s.handleUpdatePeminjaman)
 	mux.HandleFunc("DELETE /peminjaman/{id}", s.handleDeletePeminjaman)
 
+	// Change Request A: Dashboard Ringkasan Harian
+	mux.HandleFunc("GET /ringkasan", s.handleGetRingkasan)
+
 	return mux
 }
 
@@ -316,4 +319,51 @@ func (s *Server) handleDeletePeminjaman(w http.ResponseWriter, r *http.Request) 
 	delete(s.store.peminjaman, id)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Change Request A: GET /ringkasan?tanggal=YYYY-MM-DD
+func (s *Server) handleGetRingkasan(w http.ResponseWriter, r *http.Request) {
+	tanggal := r.URL.Query().Get("tanggal")
+	if !validateTanggal(tanggal) {
+		writeError(w, http.StatusBadRequest, "tanggal wajib diisi dan harus berupa tanggal valid format YYYY-MM-DD")
+		return
+	}
+
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+
+	jumlahPeminjaman := 0
+	totalUnitSlot := 0
+	peminjamanPerSD := make(map[int]int)
+
+	for _, p := range s.store.peminjaman {
+		if p.Tanggal == tanggal && p.Status == "aktif" {
+			jumlahPeminjaman++
+			durasiSlot := p.SlotSelesai - p.SlotMulai + 1
+			totalUnitSlot += p.Jumlah * durasiSlot
+			peminjamanPerSD[p.SumberDayaID]++
+		}
+	}
+
+	perSumberDaya := make([]RingkasanSumberDaya, 0, len(s.store.sumberDaya))
+	for _, sd := range s.store.sumberDaya {
+		perSumberDaya = append(perSumberDaya, RingkasanSumberDaya{
+			SumberDayaID:     sd.ID,
+			Nama:             sd.Nama,
+			JumlahPeminjaman: peminjamanPerSD[sd.ID],
+		})
+	}
+
+	sort.Slice(perSumberDaya, func(i, j int) bool {
+		return perSumberDaya[i].SumberDayaID < perSumberDaya[j].SumberDayaID
+	})
+
+	resp := RingkasanResponse{
+		Tanggal:          tanggal,
+		JumlahPeminjaman: jumlahPeminjaman,
+		TotalUnitSlot:    totalUnitSlot,
+		PerSumberDaya:    perSumberDaya,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

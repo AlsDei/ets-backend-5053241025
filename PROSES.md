@@ -42,4 +42,9 @@ Alasan memilih: satu sumber kebenaran, jadi ketersediaan tidak mungkin bilang "k
 
 ## 5. Change request
 
-(Apa yang diminta, bagian kode mana yang kamu ubah, dan satu keputusan desain yang kamu ambil.)
+- Apa yang diminta: Menyediakan endpoint `GET /ringkasan?tanggal=YYYY-MM-DD` yang mengembalikan ringkasan harian: jumlah peminjaman aktif, total unit slot terpakai (dihitung dari jumlah * durasi slot), dan daftar peminjaman per sumber daya yang mencakup semua sumber daya berurutan berdasarkan id naik (bernilai 0 jika tidak dipinjam).
+- Bagian kode mana yang kamu ubah:
+  1. Menambahkan struct `RingkasanSumberDaya` dan `RingkasanResponse` di `models.go`.
+  2. Mendaftarkan route `GET /ringkasan` di `NewHandler()` pada `api.go`.
+  3. Mengimplementasikan handler `handleGetRingkasan` di `api.go` dengan validasi query tanggal menggunakan helper `validateTanggal()`.
+- Satu keputusan desain yang kamu ambil: Menggunakan map sementara `peminjamanPerSD[int]int` saat mengagregasi peminjaman aktif di tanggal tersebut, kemudian melakukan iterasi terhadap `s.store.sumberDaya` untuk menyusun `per_sumber_daya`. Dengan cara ini, semua sumber daya (termasuk yang tidak memiliki peminjaman pada hari itu) secara otomatis tercakup dengan nilai `0` dan urutan ID tetap terjamin ascending tanpa memerlukan kueri berulang.

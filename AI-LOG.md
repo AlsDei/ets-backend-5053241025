@@ -5,36 +5,36 @@ Catat setiap penggunaan AI yang menghasilkan kode. Jika tidak memakai AI sama se
 Log yang jujur tidak mengurangi nilai, sebanyak apa pun AI dipakai. Yang mengurangi nilai adalah log yang tidak sesuai dengan kode, atau isi log yang tidak bisa dijelaskan.
 
 ## Setup Kerangka Dasar Proyek
-- Prompt: "bantu aku setup kerangka dasar di repo aku."
-- Dipakai: `models.go`, `store.go`, `helpers.go`, dan kerangka router `main.go`.
-- Diubah: Menyesuaikan tag JSON dan struct agar selaras dengan spesifikasi PinjamKampus serta Persona A.
+- Prompt: "bantu aku setup kerangka dasar di repo aku"
+- Dipakai: `models.go`, `store.go`, `helpers.go`, dan `main.go`.
+- Diubah: Menyesuaikan struct dan tag JSON dengan kontrak PinjamKampus serta Persona A, dan menyiapkan routing standar `http.NewServeMux` Go 1.22.
 
-## B1: Buat Sumber Daya (POST /sumber-daya)
-- Prompt: "Sekarang bantu aku buat B1 (POST /sumber-daya). Urutannya: Decode body dengan json.NewDecoder. Kalau error balas 400. strings.TrimSpace pada nama. Validasi nama tidak kosong dan maksimal 50 karakter (utf8.RuneCountInString), jenis ruang atau alat, stok minimal 1 di validasi.go. s.store.mu.Lock() defer Unlock(), beri id dari idSumberDayaNext, tambahkan ke slice, naikkan counter. Balas 201 dengan objek SumberDaya."
-- Dipakai: Fungsi `validateCreateSumberDaya` di `validasi.go` dan handler `handleCreateSumberDaya` di `main.go`.
-- Diubah: Memastikan penghitungan panjang string menggunakan `utf8.RuneCountInString` agar sesuai ketentuan (per karakter, bukan per byte), dan mengunci mutex sebelum mengakses serta menginkremen `idSumberDayaNext` dan slice `sumberDaya` untuk mencegah race condition.
+## B1: Kelola Sumber Daya
+- Prompt: "Langkah berikutnya: B1 (POST /sumber-daya) ... dan GET /sumber-daya"
+- Dipakai: `validateCreateSumberDaya` di `validasi.go`, `handleCreateSumberDaya`, `handleListSumberDaya`, dan `handleGetSumberDaya` di `api.go`.
+- Diubah: Menghitung panjang nama dengan `utf8.RuneCountInString` (karakter, bukan byte), memastikan slice kosong mengembalikan `[]`, serta memvalidasi `parseID` sebelum mencari data.
 
-## B1: Lihat Sumber Daya (GET /sumber-daya dan GET /sumber-daya/{id})
-- Prompt: "bisakah kamu kerjakan GET /sumber-daya dan GET /sumber-daya/{id}. setelah kamu kerjakan langsung isi ailog"
-- Dipakai: `handleListSumberDaya` dan `handleGetSumberDaya` di `api.go`.
-- Diubah: Memastikan pengembalian list kosong berupa `[]` (bukan `null`) dan slice di-copy di dalam critical section mutex (`s.store.mu.Lock()`). Pada `handleGetSumberDaya`, validasi ID dilakukan lebih dahulu menggunakan `parseID` (jika bukan angka positif menghasilkan 400), lalu mencari ke slice sumber daya, dan mengembalikan 404 jika tidak ditemukan.
-
-## B2 & B3: Validasi, Buat Peminjaman, dan Lihat Peminjaman
-- Prompt: "Validasi peminjaman di validasi.go (tanggal, slot, sumber_daya_id harus ada, jumlah ≤ stok). POST /peminjaman (belum perlu cek bentrok, itu B5). GET /peminjaman dengan filter, lalu GET /peminjaman/{id}."
-- Dipakai: Fungsi `validatePeminjaman` di `validasi.go`, method `findSumberDaya` di `store.go`, serta handler `handleCreatePeminjaman`, `handleListPeminjaman`, dan `handleGetPeminjaman` di `api.go`.
-- Diubah: Memvalidasi tanggal menggunakan `time.Parse("2006-01-02", ...)` dan verifikasi kecocokan kalender, mengecek rentang slot 1-8 serta `slot_mulai <= slot_selesai`, mengecek eksistensi sumber daya dan batas stok (status 400). Pada `GET /peminjaman`, parsing filter query opsional (`sumber_daya_id`, `tanggal`, `status`), mengembalikan 400 jika `sumber_daya_id` bukan angka, serta menyortir hasil ascending berdasarkan ID dan menjamin inisialisasi slice kosong mengembalikan `[]`.
+## B2 & B3: Buat dan Lihat Peminjaman
+- Prompt: "Validasi peminjaman di validasi.go, POST /peminjaman, GET /peminjaman dengan filter, dan GET /peminjaman/{id}"
+- Dipakai: `validatePeminjaman` di `validasi.go`, `findSumberDaya` di `store.go`, serta handler peminjaman di `api.go`.
+- Diubah: Menambahkan validasi kalender dengan `time.Parse`, filter query opsional (`sumber_daya_id`, `tanggal`, `status`), dan memastikan hasil list selalu urut ID naik.
 
 ## Fitur Khas Persona A: Ketersediaan Sumber Daya (GET /sumber-daya/{id}/ketersediaan)
-- Prompt: "selesaikan khas persona dahulu. taruh prompt ini di ai-log"
-- Dipakai: Fungsi `validateTanggal` di `validasi.go`, method `hitungPemakaianSlot` di `store.go`, serta handler `handleKetersediaanSumberDaya` di `api.go`.
-- Diubah: Mengikuti urutan pemeriksaan ketat sesuai kartu persona: id bukan angka (400), sumber daya tidak ada (404), dan tanggal kosong/tidak valid (400). Menggunakan fungsi `hitungPemakaianSlot` yang memindai peminjaman aktif pada tanggal dan sumber daya tersebut untuk menghitung sisa kapasitas dan status ketersediaan pada 8 slot secara berurutan (slot 1 sampai 8).
+- Prompt: "selesaikan khas persona dahulu"
+- Dipakai: `validateTanggal` di `validasi.go`, `hitungPemakaianSlot` di `store.go`, dan `handleKetersediaanSumberDaya` di `api.go`.
+- Diubah: Menerapkan urutan validasi ketat (id 400 -> sumber daya 404 -> tanggal 400) dan menghitung sisa unit untuk slot 1–8 dari peminjaman berstatus aktif.
 
-## B5: Deteksi Bentrok Kapasitas Slot (409 Conflict)
-- Prompt: "lanjut kerjakan b5, masukkanprompt ini ke ai-log.md"
-- Dipakai: Method `cekBentrok` di `store.go` dan integrasi pengecekan bentrok pada `handleCreatePeminjaman` di `api.go`.
-- Diubah: Memanfaatkan `hitungPemakaianSlot` sebagai sumber kebenaran tunggal (*single source of truth*). Jika pemakaian unit eksisting ditambah jumlah unit baru pada salah satu slot dalam rentang `[slot_mulai, slot_selesai]` melebihi stok kapasitas, request ditolak dengan status 409 Conflict. Pemeriksaan bentrok dan penulisan data dilakukan di dalam lock mutex yang sama untuk menjamin thread-safety (B7).
+## B5: Deteksi Bentrok Kapasitas Slot
+- Prompt: "lanjut kerjakan b5"
+- Dipakai: Method `cekBentrok` di `store.go` dan integrasi di `handleCreatePeminjaman`.
+- Diubah: Menggunakan `hitungPemakaianSlot` sebagai sumber kebenaran tunggal untuk menolak request dengan status 409 jika unit terpakai + unit baru melebihi stok pada rentang slot.
 
 ## B6 & B7: Ubah/Hapus Peminjaman dan Keamanan Konkurensi
-- Prompt: "coba sekarang bantu aku menerjakan b6-b7. masukkan ini ke ailog"
-- Dipakai: Handler `handleUpdatePeminjaman` dan `handleDeletePeminjaman` di `api.go`.
-- Diubah: Pada `handleUpdatePeminjaman`, urutan pengecekan diterapkan secara ketat: validasi format id (400) -> cek keberadaan peminjaman (404) -> parse & validasi request body (400) -> cek bentrok kapasitas (409). Saat cek bentrok pada PUT, ID peminjaman itu sendiri dikecualikan (`excludeID: id`) agar tidak bertabrakan dengan dirinya sendiri. Nilai `id` dan `status` tetap dipertahankan. Pada `handleDeletePeminjaman`, jika ID valid dan ditemukan, data dihapus dari map dan mengembalikan 204 No Content. Seluruh operasi (pemeriksaan bentrok, update data, pembacaan) diproteksi menggunakan `s.store.mu.Lock()` untuk menjamin concurrency safety (B7) saat request datang bersamaan.
+- Prompt: "coba sekarang bantu aku menerjakan b6-b7"
+- Dipakai: `handleUpdatePeminjaman` dan `handleDeletePeminjaman` di `api.go`.
+- Diubah: Pada PUT, mengecualikan ID peminjaman itu sendiri dari cek bentrok agar tidak bentrok dengan diri sendiri, menjaga `id` dan `status` tetap, serta membungkus semua operasi data dalam `s.store.mu.Lock()` untuk mencegah race condition.
+
+## Change Request A: Dashboard Ringkasan Harian (GET /ringkasan)
+- Prompt: "implementasi request change CR-A"
+- Dipakai: Struct ringkasan di `models.go` dan `handleGetRingkasan` di `api.go`.
+- Diubah: Menghitung `total_unit_slot` dengan rumus `jumlah * durasi slot`, serta menyertakan semua sumber daya terurut ID naik (dengan nilai 0 bila belum ada peminjaman).
