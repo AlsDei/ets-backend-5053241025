@@ -1,36 +1,12 @@
 #!/usr/bin/env bash
 # Tes fitur khas Persona A: GET /sumber-daya/{id}/ketersediaan?tanggal=
 # Jalankan di server BARU (data kosong):  bash persona_a_test.sh
-# Butuh: bash, curl, python3. Alat bantu uji, bukan bagian dari repo.
+# Butuh: bash dan curl saja. Alat bantu uji, bukan bagian dari repo.
 
 BASE=${BASE:-http://localhost:8080}
-PYBIN=$(command -v python3 || command -v python)
-if [ -z "$PYBIN" ]; then echo "Python tidak ditemukan (butuh python3 atau python)"; exit 1; fi
 pass=0; fail=0
-TMP=$(mktemp); PY=$(mktemp --suffix=.py)
+TMP=$(mktemp)
 
-cat > "$PY" << 'PYEOF'
-import sys, json
-rid, tgl, want = int(sys.argv[1]), sys.argv[2], [int(x) for x in sys.argv[3].split(",")]
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("respons bukan JSON valid"); sys.exit(1)
-errs = []
-if d.get("sumber_daya_id") != rid: errs.append("sumber_daya_id salah: %r" % d.get("sumber_daya_id"))
-if d.get("tanggal") != tgl: errs.append("tanggal salah: %r" % d.get("tanggal"))
-s = d.get("slot")
-if not isinstance(s, list) or len(s) != 8:
-    errs.append("field slot harus array berisi 8 elemen")
-else:
-    if [x.get("slot") for x in s] != list(range(1, 9)): errs.append("nomor slot harus 1..8 berurutan")
-    got = [x.get("sisa") for x in s]
-    if got != want: errs.append("sisa %s != harapan %s" % (got, want))
-    for x in s:
-        if x.get("tersedia") != ((x.get("sisa") or 0) > 0):
-            errs.append("tersedia tidak konsisten di slot %s" % x.get("slot")); break
-print("; ".join(errs)); sys.exit(1 if errs else 0)
-PYEOF
 
 check() { # name want METHOD path [body]
   local name=$1 want=$2 method=$3 path=$4 body=$5 got
@@ -44,10 +20,21 @@ check() { # name want METHOD path [body]
 }
 
 avail() { # name rid tanggal "sisa1,...,sisa8"
-  local name=$1 rid=$2 tgl=$3 want=$4 msg
-  msg=$(curl -s "$BASE/sumber-daya/$rid/ketersediaan?tanggal=$tgl" | "$PYBIN" "$PY" "$rid" "$tgl" "$want")
-  if [ $? -eq 0 ]; then pass=$((pass+1)); echo "  ok    $name"
-  else fail=$((fail+1)); echo "  FAIL  $name -> $msg"; fi
+  local name=$1 rid=$2 tgl=$3 want=$4 out slots sisa tersedia want_t rid_got tgl_got errs=""
+  out=$(curl -s "$BASE/sumber-daya/$rid/ketersediaan?tanggal=$tgl")
+  slots=$(echo "$out" | grep -o '"slot": *[0-9]\+' | grep -o '[0-9]\+$' | paste -sd, -)
+  sisa=$(echo "$out" | grep -o '"sisa": *-\?[0-9]\+' | grep -o -- '-\?[0-9]\+$' | paste -sd, -)
+  tersedia=$(echo "$out" | grep -o '"tersedia": *\(true\|false\)' | grep -o '\(true\|false\)$' | paste -sd, -)
+  rid_got=$(echo "$out" | grep -o '"sumber_daya_id": *[0-9]\+' | grep -o '[0-9]\+$')
+  tgl_got=$(echo "$out" | grep -o '"tanggal": *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/')
+  want_t=$(echo "$want" | tr ',' '\n' | awk '{print ($1>0)?"true":"false"}' | paste -sd, -)
+  [ "$rid_got" = "$rid" ] || errs="$errs sumber_daya_id salah ($rid_got);"
+  [ "$tgl_got" = "$tgl" ] || errs="$errs tanggal salah ($tgl_got);"
+  [ "$slots" = "1,2,3,4,5,6,7,8" ] || errs="$errs nomor slot harus 1..8 berurutan (dapat: $slots);"
+  [ "$sisa" = "$want" ] || errs="$errs sisa [$sisa] != harapan [$want];"
+  [ "$tersedia" = "$want_t" ] || errs="$errs tersedia tidak konsisten dengan sisa;"
+  if [ -z "$errs" ]; then pass=$((pass+1)); echo "  ok    $name"
+  else fail=$((fail+1)); echo "  FAIL  $name ->$errs"; fi
 }
 
 P() { echo "{\"sumber_daya_id\":$1,\"peminjam\":\"$2\",\"tanggal\":\"$3\",\"slot_mulai\":$4,\"slot_selesai\":$5,\"jumlah\":$6}"; }
@@ -100,6 +87,6 @@ avail "semua slot sisa 0 (tersedia=false)" 1 2026-12-01 "0,0,0,0,0,0,0,0"
 check "DELETE peminjaman penuh"           204 DELETE /peminjaman/3
 avail "pulih setelah dihapus"             1 2026-12-01 "3,3,3,3,3,3,3,3"
 
-rm -f "$TMP" "$PY"
+rm -f "$TMP"
 echo; echo "Hasil: $pass lulus, $fail gagal"
 [ "$fail" -eq 0 ]

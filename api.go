@@ -99,11 +99,55 @@ func (s *Server) handleGetSumberDaya(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "sumber daya tidak ditemukan")
 }
 
+// Persona A: GET /sumber-daya/{id}/ketersediaan?tanggal=YYYY-MM-DD
+// Urutan: id bukan angka (400), sumber daya tidak ada (404), tanggal kosong atau tidak valid (400).
 func (s *Server) handleKetersediaanSumberDaya(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "belum diimplementasi")
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "id harus berupa angka positif")
+		return
+	}
+
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+
+	sd := s.store.findSumberDaya(id)
+	if sd == nil {
+		writeError(w, http.StatusNotFound, "sumber daya tidak ditemukan")
+		return
+	}
+
+	tanggal := r.URL.Query().Get("tanggal")
+	if !validateTanggal(tanggal) {
+		writeError(w, http.StatusBadRequest, "tanggal wajib diisi dan harus berupa tanggal valid format YYYY-MM-DD")
+		return
+	}
+
+	pemakaian := s.store.hitungPemakaianSlot(id, tanggal, 0)
+
+	slots := make([]SlotKetersediaan, 0, 8)
+	for slot := 1; slot <= 8; slot++ {
+		sisa := sd.Stok - pemakaian[slot]
+		if sisa < 0 {
+			sisa = 0
+		}
+		slots = append(slots, SlotKetersediaan{
+			Slot:     slot,
+			Sisa:     sisa,
+			Tersedia: sisa > 0,
+		})
+	}
+
+	resp := KetersediaanResponse{
+		SumberDayaID: id,
+		Tanggal:      tanggal,
+		Slot:         slots,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
-// B2: POST /peminjaman (membuat peminjaman, status awal 'aktif')
+// B2 & B5: POST /peminjaman (membuat peminjaman, status awal 'aktif', deteksi bentrok B5)
 func (s *Server) handleCreatePeminjaman(w http.ResponseWriter, r *http.Request) {
 	var req PeminjamanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -117,6 +161,12 @@ func (s *Server) handleCreatePeminjaman(w http.ResponseWriter, r *http.Request) 
 	sd := s.store.findSumberDaya(req.SumberDayaID)
 	if errMsg := validatePeminjaman(&req, sd); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	// B5: Deteksi bentrok kapasitas stok
+	if s.store.cekBentrok(req.SumberDayaID, req.Tanggal, req.SlotMulai, req.SlotSelesai, req.Jumlah, sd.Stok, 0) {
+		writeError(w, http.StatusConflict, "kapasitas pada slot yang diminta tidak mencukupi")
 		return
 	}
 
@@ -197,10 +247,73 @@ func (s *Server) handleGetPeminjaman(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// B6: PUT /peminjaman/{id} (mengganti 6 field peminjaman tanpa mengubah ID dan status)
+// Urutan: id bukan angka (400) -> data tidak ditemukan (404) -> body tidak valid (400) -> cek bentrok (409)
 func (s *Server) handleUpdatePeminjaman(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "belum diimplementasi")
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "id harus berupa angka positif")
+		return
+	}
+
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+
+	existing, exists := s.store.peminjaman[id]
+	if !exists {
+		writeError(w, http.StatusNotFound, "peminjaman tidak ditemukan")
+		return
+	}
+
+	var req PeminjamanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "body request tidak valid")
+		return
+	}
+
+	sd := s.store.findSumberDaya(req.SumberDayaID)
+	if errMsg := validatePeminjaman(&req, sd); errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	// Cek bentrok dengan mengecualikan ID peminjaman saat ini agar tidak bentrok dengan diri sendiri
+	if s.store.cekBentrok(req.SumberDayaID, req.Tanggal, req.SlotMulai, req.SlotSelesai, req.Jumlah, sd.Stok, id) {
+		writeError(w, http.StatusConflict, "kapasitas pada slot yang diminta tidak mencukupi")
+		return
+	}
+
+	// Perbarui keenam field, pertahankan id dan status semula
+	existing.SumberDayaID = req.SumberDayaID
+	existing.Peminjam = req.Peminjam
+	existing.Tanggal = req.Tanggal
+	existing.SlotMulai = req.SlotMulai
+	existing.SlotSelesai = req.SlotSelesai
+	existing.Jumlah = req.Jumlah
+
+	s.store.peminjaman[id] = existing
+
+	writeJSON(w, http.StatusOK, existing)
 }
 
+// B6: DELETE /peminjaman/{id} (menghapus peminjaman, respons 204 tanpa body)
+// Urutan: id bukan angka (400) -> data tidak ditemukan (404)
 func (s *Server) handleDeletePeminjaman(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "belum diimplementasi")
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "id harus berupa angka positif")
+		return
+	}
+
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+
+	if _, exists := s.store.peminjaman[id]; !exists {
+		writeError(w, http.StatusNotFound, "peminjaman tidak ditemukan")
+		return
+	}
+
+	delete(s.store.peminjaman, id)
+
+	w.WriteHeader(http.StatusNoContent)
 }

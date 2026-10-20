@@ -23,3 +23,18 @@ Log yang jujur tidak mengurangi nilai, sebanyak apa pun AI dipakai. Yang mengura
 - Prompt: "Validasi peminjaman di validasi.go (tanggal, slot, sumber_daya_id harus ada, jumlah ≤ stok). POST /peminjaman (belum perlu cek bentrok, itu B5). GET /peminjaman dengan filter, lalu GET /peminjaman/{id}."
 - Dipakai: Fungsi `validatePeminjaman` di `validasi.go`, method `findSumberDaya` di `store.go`, serta handler `handleCreatePeminjaman`, `handleListPeminjaman`, dan `handleGetPeminjaman` di `api.go`.
 - Diubah: Memvalidasi tanggal menggunakan `time.Parse("2006-01-02", ...)` dan verifikasi kecocokan kalender, mengecek rentang slot 1-8 serta `slot_mulai <= slot_selesai`, mengecek eksistensi sumber daya dan batas stok (status 400). Pada `GET /peminjaman`, parsing filter query opsional (`sumber_daya_id`, `tanggal`, `status`), mengembalikan 400 jika `sumber_daya_id` bukan angka, serta menyortir hasil ascending berdasarkan ID dan menjamin inisialisasi slice kosong mengembalikan `[]`.
+
+## Fitur Khas Persona A: Ketersediaan Sumber Daya (GET /sumber-daya/{id}/ketersediaan)
+- Prompt: "selesaikan khas persona dahulu. taruh prompt ini di ai-log"
+- Dipakai: Fungsi `validateTanggal` di `validasi.go`, method `hitungPemakaianSlot` di `store.go`, serta handler `handleKetersediaanSumberDaya` di `api.go`.
+- Diubah: Mengikuti urutan pemeriksaan ketat sesuai kartu persona: id bukan angka (400), sumber daya tidak ada (404), dan tanggal kosong/tidak valid (400). Menggunakan fungsi `hitungPemakaianSlot` yang memindai peminjaman aktif pada tanggal dan sumber daya tersebut untuk menghitung sisa kapasitas dan status ketersediaan pada 8 slot secara berurutan (slot 1 sampai 8).
+
+## B5: Deteksi Bentrok Kapasitas Slot (409 Conflict)
+- Prompt: "lanjut kerjakan b5, masukkanprompt ini ke ai-log.md"
+- Dipakai: Method `cekBentrok` di `store.go` dan integrasi pengecekan bentrok pada `handleCreatePeminjaman` di `api.go`.
+- Diubah: Memanfaatkan `hitungPemakaianSlot` sebagai sumber kebenaran tunggal (*single source of truth*). Jika pemakaian unit eksisting ditambah jumlah unit baru pada salah satu slot dalam rentang `[slot_mulai, slot_selesai]` melebihi stok kapasitas, request ditolak dengan status 409 Conflict. Pemeriksaan bentrok dan penulisan data dilakukan di dalam lock mutex yang sama untuk menjamin thread-safety (B7).
+
+## B6 & B7: Ubah/Hapus Peminjaman dan Keamanan Konkurensi
+- Prompt: "coba sekarang bantu aku menerjakan b6-b7. masukkan ini ke ailog"
+- Dipakai: Handler `handleUpdatePeminjaman` dan `handleDeletePeminjaman` di `api.go`.
+- Diubah: Pada `handleUpdatePeminjaman`, urutan pengecekan diterapkan secara ketat: validasi format id (400) -> cek keberadaan peminjaman (404) -> parse & validasi request body (400) -> cek bentrok kapasitas (409). Saat cek bentrok pada PUT, ID peminjaman itu sendiri dikecualikan (`excludeID: id`) agar tidak bertabrakan dengan dirinya sendiri. Nilai `id` dan `status` tetap dipertahankan. Pada `handleDeletePeminjaman`, jika ID valid dan ditemukan, data dihapus dari map dan mengembalikan 204 No Content. Seluruh operasi (pemeriksaan bentrok, update data, pembacaan) diproteksi menggunakan `s.store.mu.Lock()` untuk menjamin concurrency safety (B7) saat request datang bersamaan.

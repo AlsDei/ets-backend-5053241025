@@ -30,3 +30,36 @@ func (s *Store) findSumberDaya(id int) *SumberDaya {
 	}
 	return nil
 }
+
+// hitungPemakaianSlot menghitung total unit terpakai pada slot 1-8 untuk sumber daya dan tanggal tertentu,
+// mengecualikan peminjaman dengan ID excludeID (berguna untuk PUT dan ketersediaan).
+func (s *Store) hitungPemakaianSlot(sumberDayaID int, tanggal string, excludeID int) [9]int {
+	var pemakaian [9]int
+	for _, p := range s.peminjaman {
+		if p.ID == excludeID {
+			continue
+		}
+		if p.SumberDayaID == sumberDayaID && p.Tanggal == tanggal && p.Status == "aktif" {
+			for slot := p.SlotMulai; slot <= p.SlotSelesai; slot++ {
+				if slot >= 1 && slot <= 8 {
+					pemakaian[slot] += p.Jumlah
+				}
+			}
+		}
+	}
+	return pemakaian
+}
+
+// cekBentrok memeriksa apakah peminjaman baru/update melebihi stok yang ada pada rentang slot yang diminta.
+// Mengembalikan true jika terjadi bentrok (kapasitas terlampaui).
+func (s *Store) cekBentrok(sumberDayaID int, tanggal string, slotMulai, slotSelesai, jumlah int, stok int, excludeID int) bool {
+	pemakaian := s.hitungPemakaianSlot(sumberDayaID, tanggal, excludeID)
+	for slot := slotMulai; slot <= slotSelesai; slot++ {
+		if slot >= 1 && slot <= 8 {
+			if pemakaian[slot]+jumlah > stok {
+				return true
+			}
+		}
+	}
+	return false
+}

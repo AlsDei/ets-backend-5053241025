@@ -30,6 +30,16 @@ func validateCreateSumberDaya(req *CreateSumberDayaRequest) string {
 	return ""
 }
 
+// validateTanggal memeriksa apakah string tanggal sesuai format YYYY-MM-DD dan valid secara kalender.
+func validateTanggal(tanggal string) bool {
+	tanggal = strings.TrimSpace(tanggal)
+	if tanggal == "" {
+		return false
+	}
+	t, err := time.Parse("2006-01-02", tanggal)
+	return err == nil && t.Format("2006-01-02") == tanggal
+}
+
 // validatePeminjaman memvalidasi payload request peminjaman.
 // Memeriksa peminjam, format tanggal kalender, rentang slot 1-8, keberadaan sumber daya, dan jumlah <= stok.
 func validatePeminjaman(req *PeminjamanRequest, sd *SumberDaya) string {
@@ -41,8 +51,7 @@ func validatePeminjaman(req *PeminjamanRequest, sd *SumberDaya) string {
 		return "peminjam maksimal 50 karakter"
 	}
 
-	t, err := time.Parse("2006-01-02", req.Tanggal)
-	if err != nil || t.Format("2006-01-02") != req.Tanggal {
+	if !validateTanggal(req.Tanggal) {
 		return "format tanggal harus YYYY-MM-DD dan merupakan tanggal valid"
 	}
 
